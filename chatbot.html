@@ -158,13 +158,13 @@
   <header>
     <div>
       <h1>AI Chatbot</h1>
-      <div class="sub">Talks to your local FastAPI server</div>
+      <div class="sub">Talks to your FastAPI server</div>
     </div>
     <button id="clear-btn">Clear chat</button>
   </header>
   <div id="server-url-row">
     <label for="server-url">Server:</label>
-    <input id="server-url" type="text" value="https://chatbot-by6y.onrender.com" />
+    <input id="server-url" type="text" value="" />
   </div>
   <div id="messages">
     <div class="empty-state" id="empty-state">Make sure the server is running (see README), then say something to start.</div>
@@ -183,6 +183,15 @@
   const sendBtn = document.getElementById('send-btn');
   const clearBtn = document.getElementById('clear-btn');
   const serverUrlInput = document.getElementById('server-url');
+
+  // Auto-detect server URL:
+  // - If this page is served over http/https (e.g. from Render), use that same origin.
+  // - If opened locally as a file:// page, fall back to localhost:8000.
+  if (window.location.protocol === 'http:' || window.location.protocol === 'https:') {
+    serverUrlInput.value = window.location.origin;
+  } else {
+    serverUrlInput.value = 'http://localhost:8000';
+  }
 
   let history = [];
 

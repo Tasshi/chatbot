@@ -1,9 +1,11 @@
 import os
+from pathlib import Path
 from typing import List, Literal
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import httpx
 
@@ -18,6 +20,9 @@ if not GEMINI_API_KEY:
         "GEMINI_API_KEY is not set. Create a .env file (see .env.example) "
         "with a free API key from https://aistudio.google.com/apikey."
     )
+
+BASE_DIR = Path(__file__).resolve().parent
+CHATBOT_HTML_PATH = BASE_DIR / "chatbot.html"
 
 app = FastAPI(title="LLM Chatbot API")
 
@@ -45,6 +50,13 @@ class ChatResponse(BaseModel):
     reply: str
     input_tokens: int
     output_tokens: int
+
+
+@app.get("/")
+def serve_chatbot():
+    if not CHATBOT_HTML_PATH.exists():
+        raise HTTPException(status_code=404, detail="chatbot.html not found next to server.py")
+    return FileResponse(CHATBOT_HTML_PATH, media_type="text/html")
 
 
 @app.get("/health")
@@ -109,4 +121,3 @@ async def chat(req: ChatRequest):
         input_tokens=usage.get("promptTokenCount", 0),
         output_tokens=usage.get("candidatesTokenCount", 0),
     )
-
