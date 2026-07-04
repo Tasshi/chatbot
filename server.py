@@ -9,14 +9,14 @@ import httpx
 
 load_dotenv()
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
-ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{{model}}:generateContent"
 
-if not ANTHROPIC_API_KEY:
+if not GEMINI_API_KEY:
     raise RuntimeError(
-        "ANTHROPIC_API_KEY is not set. Create a .env file (see .env.example) "
-        "with your API key from console.anthropic.com."
+        "GEMINI_API_KEY is not set. Create a .env file (see .env.example) "
+        "with a free API key from https://aistudio.google.com/apikey."
     )
 
 app = FastAPI(title="LLM Chatbot API")
@@ -57,27 +57,36 @@ async def chat(req: ChatRequest):
     if not req.messages:
         raise HTTPException(status_code=400, detail="messages must not be empty")
 
+    # Gemini uses "model"/"user" roles and a "contents" list instead of Anthropic's "messages" format.
+    contents = [
+        {
+            "role": "model" if m.role == "assistant" else "user",
+            "parts": [{"text": m.content}],
+        }
+        for m in req.messages
+    ]
+
     payload = {
-        "model": ANTHROPIC_MODEL,
-        "max_tokens": req.max_tokens,
-        "temperature": req.temperature,
-        "messages": [m.model_dump() for m in req.messages],
+        "contents": contents,
+        "generationConfig": {
+            "maxOutputTokens": req.max_tokens,
+            "temperature": req.temperature,
+        },
     }
 
-    headers = {
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-    }
+    url = GEMINI_URL.format(model=GEMINI_MODEL)
 
     async with httpx.AsyncClient(timeout=60.0) as client:
         try:
-            resp = await client.post(ANTHROPIC_URL, json=payload, headers=headers)
+            resp = await client.post(
+                url,
+                params={"key": GEMINI_API_KEY},
+                json=payload,
+            )
         except httpx.RequestError as exc:
             raise HTTPException(status_code=502, detail=f"Upstream request failed: {exc}")
 
     if resp.status_code != 200:
-        # Surface the upstream error message where possible.
         try:
             detail = resp.json().get("error", {}).get("message", resp.text)
         except Exception:
@@ -85,12 +94,19 @@ async def chat(req: ChatRequest):
         raise HTTPException(status_code=resp.status_code, detail=detail)
 
     data = resp.json()
-    text_blocks = [b["text"] for b in data.get("content", []) if b.get("type") == "text"]
-    reply = "\n".join(text_blocks) if text_blocks else "(no response)"
-    usage = data.get("usage", {})
+
+    try:
+        candidate = data["candidates"][0]
+        parts = candidate.get("content", {}).get("parts", [])
+        reply = "\n".join(p.get("text", "") for p in parts) or "(no response)"
+    except (KeyError, IndexError):
+        reply = "(no response)"
+
+    usage = data.get("usageMetadata", {})
 
     return ChatResponse(
         reply=reply,
-        input_tokens=usage.get("input_tokens", 0),
-        output_tokens=usage.get("output_tokens", 0),
+        input_tokens=usage.get("promptTokenCount", 0),
+        output_tokens=usage.get("candidatesTokenCount", 0),
     )
+
