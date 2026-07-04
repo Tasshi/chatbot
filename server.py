@@ -19,10 +19,9 @@ GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:ge
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODELS = [
+    "openrouter/free",  # auto-router: always picks a currently-available free model
     "meta-llama/llama-3.3-70b-instruct:free",
-    "qwen/qwen3-coder-480b:free",
     "deepseek/deepseek-r1:free",
-    "google/gemma-3-27b-it:free",
 ]
 
 if not GEMINI_API_KEY and not OPENROUTER_API_KEY:
@@ -180,15 +179,15 @@ async def chat(req: ChatRequest):
 
     errors = []
 
-    if GEMINI_API_KEY:
-        try:
-            return await call_gemini(req)
-        except Exception as exc:
-            errors.append(str(exc))
-
     if OPENROUTER_API_KEY:
         try:
             return await call_openrouter(req)
+        except Exception as exc:
+            errors.append(str(exc))
+
+    if GEMINI_API_KEY:
+        try:
+            return await call_gemini(req)
         except Exception as exc:
             errors.append(str(exc))
 
