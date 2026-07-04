@@ -14,12 +14,20 @@ load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{{model}}:generateContent"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
-if not GEMINI_API_KEY:
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_MODELS = [
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "qwen/qwen3-coder-480b:free",
+    "deepseek/deepseek-r1:free",
+    "google/gemma-3-27b-it:free",
+]
+
+if not GEMINI_API_KEY and not OPENROUTER_API_KEY:
     raise RuntimeError(
-        "GEMINI_API_KEY is not set. Create a .env file (see .env.example) "
-        "with a free API key from https://aistudio.google.com/apikey."
+        "Set at least one of GEMINI_API_KEY or OPENROUTER_API_KEY in your .env file."
     )
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -27,7 +35,6 @@ CHATBOT_HTML_PATH = BASE_DIR / "chatbot.html"
 
 app = FastAPI(title="LLM Chatbot API")
 
-# Allow the local HTML frontend (opened via file:// or a local dev server) to call this API.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -35,7 +42,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Serve static assets (style.css, future .js/image files, etc.) at /static/*
 app.mount("/static", StaticFiles(directory=BASE_DIR), name="static")
 
 
@@ -54,6 +60,7 @@ class ChatResponse(BaseModel):
     reply: str
     input_tokens: int
     output_tokens: int
+    provider: str
 
 
 @app.get("/")
@@ -68,12 +75,10 @@ def health():
     return {"status": "ok"}
 
 
-@app.post("/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest):
-    if not req.messages:
-        raise HTTPException(status_code=400, detail="messages must not be empty")
+async def call_gemini(req: ChatRequest) -> ChatResponse:
+    if not GEMINI_API_KEY:
+        raise RuntimeError("GEMINI_API_KEY not set")
 
-    # Gemini uses "model"/"user" roles and a "contents" list instead of Anthropic's "messages" format.
     contents = [
         {
             "role": "model" if m.role == "assistant" else "user",
@@ -93,35 +98,98 @@ async def chat(req: ChatRequest):
     url = GEMINI_URL.format(model=GEMINI_MODEL)
 
     async with httpx.AsyncClient(timeout=60.0) as client:
-        try:
-            resp = await client.post(
-                url,
-                params={"key": GEMINI_API_KEY},
-                json=payload,
-            )
-        except httpx.RequestError as exc:
-            raise HTTPException(status_code=502, detail=f"Upstream request failed: {exc}")
+        resp = await client.post(url, params={"key": GEMINI_API_KEY}, json=payload)
 
     if resp.status_code != 200:
         try:
             detail = resp.json().get("error", {}).get("message", resp.text)
         except Exception:
             detail = resp.text
-        raise HTTPException(status_code=resp.status_code, detail=detail)
+        raise RuntimeError(f"Gemini error {resp.status_code}: {detail}")
 
     data = resp.json()
-
     try:
         candidate = data["candidates"][0]
         parts = candidate.get("content", {}).get("parts", [])
         reply = "\n".join(p.get("text", "") for p in parts) or "(no response)"
     except (KeyError, IndexError):
-        reply = "(no response)"
+        raise RuntimeError("Gemini returned no candidates")
 
     usage = data.get("usageMetadata", {})
-
     return ChatResponse(
         reply=reply,
         input_tokens=usage.get("promptTokenCount", 0),
         output_tokens=usage.get("candidatesTokenCount", 0),
+        provider=f"gemini:{GEMINI_MODEL}",
     )
+
+
+async def call_openrouter(req: ChatRequest) -> ChatResponse:
+    if not OPENROUTER_API_KEY:
+        raise RuntimeError("OPENROUTER_API_KEY not set")
+
+    messages = [{"role": m.role, "content": m.content} for m in req.messages]
+
+    last_error = None
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        for model in OPENROUTER_MODELS:
+            try:
+                resp = await client.post(
+                    OPENROUTER_URL,
+                    headers={
+                        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                        "Content-Type": "application/json",
+                        "HTTP-Referer": "https://dpl.bt",
+                        "X-Title": "DPL Chatbot",
+                    },
+                    json={
+                        "model": model,
+                        "messages": messages,
+                        "max_tokens": req.max_tokens,
+                        "temperature": req.temperature,
+                    },
+                )
+                if resp.status_code != 200:
+                    last_error = f"{model} -> {resp.status_code}: {resp.text}"
+                    continue
+
+                data = resp.json()
+                reply = data.get("choices", [{}])[0].get("message", {}).get("content")
+                if not reply:
+                    last_error = f"{model} -> empty response"
+                    continue
+
+                usage = data.get("usage", {})
+                return ChatResponse(
+                    reply=reply,
+                    input_tokens=usage.get("prompt_tokens", 0),
+                    output_tokens=usage.get("completion_tokens", 0),
+                    provider=f"openrouter:{model}",
+                )
+            except httpx.RequestError as exc:
+                last_error = f"{model} -> {exc}"
+                continue
+
+    raise RuntimeError(f"All OpenRouter models failed. Last error: {last_error}")
+
+
+@app.post("/chat", response_model=ChatResponse)
+async def chat(req: ChatRequest):
+    if not req.messages:
+        raise HTTPException(status_code=400, detail="messages must not be empty")
+
+    errors = []
+
+    if GEMINI_API_KEY:
+        try:
+            return await call_gemini(req)
+        except Exception as exc:
+            errors.append(str(exc))
+
+    if OPENROUTER_API_KEY:
+        try:
+            return await call_openrouter(req)
+        except Exception as exc:
+            errors.append(str(exc))
+
+    raise HTTPException(status_code=502, detail="All providers failed: " + " | ".join(errors))
