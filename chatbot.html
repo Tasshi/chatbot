@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Chatbot</title>
+<style>
+  :root {
+    --bg: #F7F6F3;
+    --surface: #FFFFFF;
+    --border: #E3E1DA;
+    --text-primary: #1F1E1C;
+    --text-secondary: #6B6862;
+    --accent: #D97757;
+    --accent-text: #FFFFFF;
+    --bubble-user: #EDEAE3;
+    --bubble-assistant: #FFFFFF;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: var(--bg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    color: var(--text-primary);
+  }
+  #app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    max-width: 720px;
+    margin: 0 auto;
+  }
+  header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+  header h1 { font-size: 16px; font-weight: 600; margin: 0; }
+  header .sub { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+  #server-url-row {
+    padding: 8px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+  }
+  #server-url {
+    flex: 1;
+    font-size: 12px;
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--text-primary);
+  }
+  #clear-btn {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+  #clear-btn:hover { background: var(--bubble-user); }
+  #messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .empty-state {
+    margin: auto;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 14px;
+    max-width: 320px;
+    line-height: 1.6;
+  }
+  .msg {
+    max-width: 78%;
+    padding: 10px 14px;
+    border-radius: var(--radius);
+    font-size: 15px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+  .msg.user { align-self: flex-end; background: var(--bubble-user); color: var(--text-primary); }
+  .msg.assistant { align-self: flex-start; background: var(--bubble-assistant); border: 1px solid var(--border); color: var(--text-primary); }
+  .msg.error { align-self: flex-start; background: #FBEAF0; border: 1px solid #F0997B; color: #712B13; }
+  .typing {
+    align-self: flex-start;
+    display: flex;
+    gap: 4px;
+    padding: 12px 14px;
+    background: var(--bubble-assistant);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-secondary); animation: bounce 1.2s infinite ease-in-out; }
+  .dot:nth-child(2) { animation-delay: 0.15s; }
+  .dot:nth-child(3) { animation-delay: 0.3s; }
+  @keyframes bounce {
+    0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
+    30% { transform: translateY(-4px); opacity: 1; }
+  }
+  form#input-form {
+    display: flex;
+    gap: 10px;
+    padding: 16px 20px;
+    border-top: 1px solid var(--border);
+    background: var(--bg);
+    flex-shrink: 0;
+  }
+  #input {
+    flex: 1;
+    resize: none;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 15px;
+    font-family: inherit;
+    background: var(--surface);
+    color: var(--text-primary);
+    max-height: 120px;
+    line-height: 1.4;
+  }
+  #input:focus { outline: none; border-color: var(--accent); }
+  #send-btn {
+    background: var(--accent);
+    color: var(--accent-text);
+    border: none;
+    border-radius: 10px;
+    padding: 0 18px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  #send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  #send-btn:hover:not(:disabled) { opacity: 0.9; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div>
+      <h1>AI Chatbot</h1>
+      <div class="sub">Talks to your local FastAPI server</div>
+    </div>
+    <button id="clear-btn">Clear chat</button>
+  </header>
+  <div id="server-url-row">
+    <label for="server-url">Server:</label>
+    <input id="server-url" type="text" value="http://localhost:8000" />
+  </div>
+  <div id="messages">
+    <div class="empty-state" id="empty-state">Make sure the server is running (see README), then say something to start.</div>
+  </div>
+  <form id="input-form">
+    <textarea id="input" placeholder="Message..." rows="1"></textarea>
+    <button id="send-btn" type="submit">Send</button>
+  </form>
+</div>
+
+<script>
+  const messagesEl = document.getElementById('messages');
+  const emptyState = document.getElementById('empty-state');
+  const form = document.getElementById('input-form');
+  const input = document.getElementById('input');
+  const sendBtn = document.getElementById('send-btn');
+  const clearBtn = document.getElementById('clear-btn');
+  const serverUrlInput = document.getElementById('server-url');
+
+  let history = [];
+
+  function autoGrow() {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+  }
+  input.addEventListener('input', autoGrow);
+
+  function addMessage(role, text) {
+    emptyState.style.display = 'none';
+    const div = document.createElement('div');
+    div.className = 'msg ' + role;
+    div.textContent = text;
+    messagesEl.appendChild(div);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    return div;
+  }
+
+  function showTyping() {
+    const div = document.createElement('div');
+    div.className = 'typing';
+    div.id = 'typing-indicator';
+    div.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
+    messagesEl.appendChild(div);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  function hideTyping() {
+    const el = document.getElementById('typing-indicator');
+    if (el) el.remove();
+  }
+
+  async function sendMessage(userText) {
+    history.push({ role: 'user', content: userText });
+    showTyping();
+    sendBtn.disabled = true;
+
+    const serverUrl = serverUrlInput.value.trim().replace(/\/$/, '');
+
+    try {
+      const response = await fetch(serverUrl + '/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: history })
+      });
+
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => ({}));
+        throw new Error(errBody.detail || ('Request failed with status ' + response.status));
+      }
+
+      const data = await response.json();
+      const reply = data.reply || '(no response)';
+
+      hideTyping();
+      addMessage('assistant', reply);
+      history.push({ role: 'assistant', content: reply });
+    } catch (err) {
+      hideTyping();
+      addMessage('error', 'Something went wrong: ' + err.message + '. Is the server running?');
+      history.pop();
+    } finally {
+      sendBtn.disabled = false;
+    }
+  }
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const text = input.value.trim();
+    if (!text) return;
+    addMessage('user', text);
+    input.value = '';
+    autoGrow();
+    sendMessage(text);
+  });
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      form.requestSubmit();
+    }
+  });
+
+  clearBtn.addEventListener('click', () => {
+    history = [];
+    messagesEl.innerHTML = '';
+    messagesEl.appendChild(emptyState);
+    emptyState.style.display = 'block';
+  });
+</script>
+</body>
+</html>
